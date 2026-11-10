@@ -4,8 +4,15 @@
  * MM Effects: ports of the ARTI-FX scripts in https://github.com/MoonModules/MM-Effects (ARTIFX/wled)
  * that upstream WLED does not already have.
  *
- * Most are Pixelblaze patterns (https://electromage.com/patterns) converted to ARTI-FX by Andrew Tuline.
- * The MM-Effects repo has no license, so this usermod is for personal use only - do not submit upstream.
+ * Credits:
+ *  - original patterns: Pixelblaze by Ben Hencke / ElectroMage (https://electromage.com/patterns)
+ *  - ARTI-FX conversions: Andrew Tuline and the MoonModules team (https://github.com/MoonModules/MM-Effects)
+ *  - ARTI-FX native examples (Beatmania, Phase Shift, Color Random, Subpixel, Bright Pulse, FFT Bars,
+ *    2D Pulse, Smiley): MoonModules / WLED SoundReactive contributors
+ *
+ * License status: MM-Effects and the Pixelblaze pattern library do not state a license. All rights to the
+ * original patterns remain with their authors. This port is not part of upstream WLED and is not offered
+ * under WLED's license; do not submit it upstream. Authors who want it changed or removed: please open an issue.
  *
  * Differences from the originals:
  *  - hue is looked up in the selected palette (default: Rainbow, which matches the original look),
