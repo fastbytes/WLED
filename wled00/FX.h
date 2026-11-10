@@ -511,6 +511,8 @@ class Segment {
     static CRGBPalette16 _newRandomPalette;   // target random palette
     static uint16_t      _lastPaletteChange;  // last random palette change time (in seconds)
     static uint16_t      _nextPaletteBlend;   // next due time for random palette morph (in millis())
+    static CRGBPalette16 _prevRandomPalette;  // random palette the synced transition starts from
+    static uint32_t      _lastPaletteSlot;    // time slot of the current synced random palette (0 = not synced)
     static bool          _modeBlend;          // mode/effect blending semaphore
     // clipping rectangle used for blending
     static uint16_t      _clipStart, _clipStop;

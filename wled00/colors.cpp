@@ -1,6 +1,7 @@
 #include "wled.h"
 #include "fcn_declare.h"
 #include "colors.h"
+#include "prng.h"
 
 /*
  * Color conversion & utility methods
@@ -155,75 +156,86 @@ void setRandomColor(byte* rgb)
   colorHStoRGB(lastRandomIndex*256,255,rgb);
 }
 
+// random number sources for the palette generators: hardware RNG (default) or seeded PRNG (synced palettes)
+namespace {
+struct HwRNG {
+  uint8_t random8() { return hw_random8(); }
+  uint8_t random8(uint8_t lim) { return hw_random8(lim); }
+  uint8_t random8(uint8_t min, uint8_t lim) { return hw_random8(min, lim); }
+};
+}
+
 /*
  * generates a random palette based on harmonic color theory
  * takes a base palette as the input, it will choose one color of the base palette and keep it
  */
-CRGBPalette16 generateHarmonicRandomPalette(const CRGBPalette16 &basepalette)
+template<class RNG>
+static CRGBPalette16 makeHarmonicRandomPalette(RNG &rng, const CRGBPalette16 &basepalette)
 {
   CHSV palettecolors[4]; // array of colors for the new palette
-  uint8_t keepcolorposition = hw_random8(4); // color position of current random palette to keep
+  uint8_t keepcolorposition = rng.random8(4); // color position of current random palette to keep
   palettecolors[keepcolorposition] = rgb2hsv(basepalette.entries[keepcolorposition*5]); // read one of the base colors of the current palette
-  palettecolors[keepcolorposition].hue += hw_random8(10)-5; // +/- 5 randomness of base color
+  if (palettecolors[keepcolorposition].saturation < 5) palettecolors[keepcolorposition].hue = rng.random8(); // gray has no meaningful hue (would always be red)
+  palettecolors[keepcolorposition].hue += rng.random8(11)-5; // +/- 5 randomness of base color
   // generate 4 saturation and brightness value numbers
   // only one saturation is allowed to be below 200 creating mostly vibrant colors
   // only one brightness value number is allowed below 200, creating mostly bright palettes
 
   for (int i = 0; i < 3; i++) { // generate three high values
-    palettecolors[i].saturation = hw_random8(200,255);
-    palettecolors[i].value = hw_random8(220,255);
+    palettecolors[i].saturation = rng.random8(200,255);
+    palettecolors[i].value = rng.random8(220,255);
   }
   // allow one to be lower
-  palettecolors[3].saturation = hw_random8(20,255);
-  palettecolors[3].value = hw_random8(80,255);
+  palettecolors[3].saturation = rng.random8(20,255);
+  palettecolors[3].value = rng.random8(80,255);
 
   // shuffle the arrays
   for (int i = 3; i > 0; i--) {
-    std::swap(palettecolors[i].saturation, palettecolors[hw_random8(i + 1)].saturation);
-    std::swap(palettecolors[i].value, palettecolors[hw_random8(i + 1)].value);
+    std::swap(palettecolors[i].saturation, palettecolors[rng.random8(i + 1)].saturation);
+    std::swap(palettecolors[i].value, palettecolors[rng.random8(i + 1)].value);
   }
 
   // now generate three new hues based off of the hue of the chosen current color
   uint8_t basehue = palettecolors[keepcolorposition].hue;
   uint8_t harmonics[3]; // hues that are harmonic but still a little random
-  uint8_t type = hw_random8(5); // choose a harmony type
+  uint8_t type = rng.random8(5); // choose a harmony type
 
   switch (type) {
     case 0: // analogous
-      harmonics[0] = basehue + hw_random8(30, 50);
-      harmonics[1] = basehue + hw_random8(10, 30);
-      harmonics[2] = basehue - hw_random8(10, 30);
+      harmonics[0] = basehue + rng.random8(30, 50);
+      harmonics[1] = basehue + rng.random8(10, 30);
+      harmonics[2] = basehue - rng.random8(10, 30);
       break;
 
     case 1: // triadic
-      harmonics[0] = basehue + 113 + hw_random8(15);
-      harmonics[1] = basehue + 233 + hw_random8(15);
-      harmonics[2] = basehue -   7 + hw_random8(15);
+      harmonics[0] = basehue + 113 + rng.random8(15);
+      harmonics[1] = basehue + 233 + rng.random8(15);
+      harmonics[2] = basehue -   7 + rng.random8(15);
       break;
 
     case 2: // split-complementary
-      harmonics[0] = basehue + 145 + hw_random8(10);
-      harmonics[1] = basehue + 205 + hw_random8(10);
-      harmonics[2] = basehue -   5 + hw_random8(10);
+      harmonics[0] = basehue + 145 + rng.random8(10);
+      harmonics[1] = basehue + 205 + rng.random8(10);
+      harmonics[2] = basehue -   5 + rng.random8(10);
       break;
 
     case 3: // square
-      harmonics[0] = basehue +  85 + hw_random8(10);
-      harmonics[1] = basehue + 175 + hw_random8(10);
-      harmonics[2] = basehue + 265 + hw_random8(10);
+      harmonics[0] = basehue +  85 + rng.random8(10);
+      harmonics[1] = basehue + 175 + rng.random8(10);
+      harmonics[2] = basehue + 265 + rng.random8(10);
      break;
 
     case 4: // tetradic
-      harmonics[0] = basehue +  80 + hw_random8(20);
-      harmonics[1] = basehue + 170 + hw_random8(20);
-      harmonics[2] = basehue -  15 + hw_random8(30);
+      harmonics[0] = basehue +  80 + rng.random8(20);
+      harmonics[1] = basehue + 170 + rng.random8(20);
+      harmonics[2] = basehue -  15 + rng.random8(30);
      break;
   }
 
-  if (hw_random8() < 128) {
+  if (rng.random8() < 128) {
     // 50:50 chance of shuffling hues or keep the color order
     for (int i = 2; i > 0; i--) {
-      std::swap(harmonics[i], harmonics[hw_random8(i + 1)]);
+      std::swap(harmonics[i], harmonics[rng.random8(i + 1)]);
     }
   }
 
@@ -236,7 +248,7 @@ CRGBPalette16 generateHarmonicRandomPalette(const CRGBPalette16 &basepalette)
   }
 
   bool makepastelpalette = false;
-  if (hw_random8() < 25) { // ~10% chance of desaturated 'pastel' colors
+  if (rng.random8() < 25) { // ~10% chance of desaturated 'pastel' colors
     makepastelpalette = true;
   }
 
@@ -256,12 +268,82 @@ CRGBPalette16 generateHarmonicRandomPalette(const CRGBPalette16 &basepalette)
                        RGBpalettecolors[3]);
 }
 
-CRGBPalette16 generateRandomPalette()  // generate fully random palette
+// circular distance between two hues (0-128)
+static inline uint8_t hueDistance(uint8_t a, uint8_t b) { return min((uint8_t)(a - b), (uint8_t)(b - a)); }
+
+// generate fully random palette, avoiding palettes where most hues are nearly the same
+template<class RNG>
+static CRGBPalette16 makeRandomPalette(RNG &rng)
 {
-  return CRGBPalette16(CHSV(hw_random8(), hw_random8(160, 255), hw_random8(128, 255)),
-                       CHSV(hw_random8(), hw_random8(160, 255), hw_random8(128, 255)),
-                       CHSV(hw_random8(), hw_random8(160, 255), hw_random8(128, 255)),
-                       CHSV(hw_random8(), hw_random8(160, 255), hw_random8(128, 255)));
+  uint8_t hues[4];
+  for (int i = 0; i < 4; i++) hues[i] = rng.random8();
+
+  // if 3 or more hues are within ~85 degrees of one hue, flip one of them to the opposite side of the color wheel
+  for (int attempt = 0; attempt < 3; attempt++) {
+    bool clustered = false;
+    for (int i = 0; i < 4 && !clustered; i++) {
+      int close = 0;
+      for (int j = 0; j < 4; j++) if (j != i && hueDistance(hues[i], hues[j]) < 60) close++;
+      clustered = (close >= 2);
+    }
+    if (!clustered) break;
+    hues[attempt] += 128;
+  }
+
+  // make sure at least one pair of hues is >= ~45 degrees apart
+  bool spread = false;
+  for (int i = 0; i < 4 && !spread; i++)
+    for (int j = i + 1; j < 4 && !spread; j++) spread = (hueDistance(hues[i], hues[j]) >= 32);
+  if (!spread) hues[0] = hues[1] + 64;
+
+  return CRGBPalette16(CHSV(hues[0], rng.random8(160, 255), rng.random8(128, 255)),
+                       CHSV(hues[1], rng.random8(160, 255), rng.random8(128, 255)),
+                       CHSV(hues[2], rng.random8(160, 255), rng.random8(128, 255)),
+                       CHSV(hues[3], rng.random8(160, 255), rng.random8(128, 255)));
+}
+
+CRGBPalette16 generateHarmonicRandomPalette(const CRGBPalette16 &basepalette)
+{
+  HwRNG rng;
+  return makeHarmonicRandomPalette(rng, basepalette);
+}
+
+CRGBPalette16 generateRandomPalette()
+{
+  HwRNG rng;
+  return makeRandomPalette(rng);
+}
+
+// scramble a time slot number into a 16bit PRNG seed (murmur3 finalizer), so neighbouring slots get unrelated palettes
+static uint16_t slotSeed(uint32_t slot)
+{
+  slot ^= slot >> 16; slot *= 0x85EBCA6BU;
+  slot ^= slot >> 13; slot *= 0xC2B2AE35U;
+  slot ^= slot >> 16;
+  return (slot >> 16) ^ (slot & 0xFFFF);
+}
+
+// harmonic palettes are chained from fixed anchor slots, so the chain never depends on a device's own history
+#define SYNCED_PALETTE_CHAIN 8
+
+/*
+ * deterministic random palette for a given time slot: every instance with synced time gets the same palette
+ * harmonic palettes keep one color of the previous slot's palette, like the hardware RNG version does
+ */
+CRGBPalette16 generateSyncedRandomPalette(uint32_t slot, bool harmonic)
+{
+  if (!harmonic) {
+    PRNG rng(slotSeed(slot));
+    return makeRandomPalette(rng);
+  }
+  uint32_t s = slot - (slot % SYNCED_PALETTE_CHAIN); // anchor slot
+  PRNG rng(slotSeed(s));
+  CRGBPalette16 palette = makeHarmonicRandomPalette(rng, makeRandomPalette(rng));
+  while (s != slot) {
+    rng.setSeed(slotSeed(++s));
+    palette = makeHarmonicRandomPalette(rng, palette);
+  }
+  return palette;
 }
 
 void loadCustomPalettes() {

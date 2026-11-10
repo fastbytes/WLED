@@ -47,6 +47,8 @@ CRGBPalette16 Segment::_randomPalette     = generateRandomPalette();  // was CRG
 CRGBPalette16 Segment::_newRandomPalette  = generateRandomPalette();  // was CRGBPalette16(DEFAULT_COLOR);
 uint16_t      Segment::_lastPaletteChange = 0; // in seconds; perhaps it should be per segment
 uint16_t      Segment::_nextPaletteBlend  = 0; // in millis
+CRGBPalette16 Segment::_prevRandomPalette = CRGBPalette16(CRGB::Black);
+uint32_t      Segment::_lastPaletteSlot   = 0;
 
 bool     Segment::_modeBlend = false;
 uint16_t Segment::_clipStart = 0;
@@ -525,6 +527,36 @@ void Segment::beginDraw(uint16_t prog) {
 
 // relies on WS2812FX::service() to call it for each frame
 void Segment::handleRandomPalette() {
+  // with millisecond-accurate network time (NTP, or UDP sync from an NTP instance) all instances
+  // derive the same palette from the current time slot and blend it on the same timeline
+  if (toki.getTimeSource() >= TOKI_TS_UDP_NTP) {
+    Toki::Time t = toki.getTime();
+    uint32_t period = max((uint8_t)1, randomPaletteChangeTime); // cfg.json may hold 0
+    uint32_t slot = t.sec / period;
+    if (slot != Segment::_lastPaletteSlot) {
+      // start from last slot's target when consecutive (identical on all instances), else from what is shown now
+      Segment::_prevRandomPalette = (slot == Segment::_lastPaletteSlot + 1) ? Segment::_newRandomPalette : Segment::_randomPalette;
+      Segment::_newRandomPalette  = generateSyncedRandomPalette(slot, useHarmonicRandomPalette);
+      Segment::_lastPaletteSlot   = slot;
+    }
+    Segment::_lastPaletteChange = millis() / 1000; // no immediate change if we fall back to unsynced mode
+
+    uint32_t elapsed    = (t.sec - slot * period) * 1000U + t.ms;
+    uint32_t transition = min((uint32_t)strip.getTransition(), period * 1000U);
+    if (elapsed >= transition) {
+      Segment::_randomPalette = Segment::_newRandomPalette;
+      return;
+    }
+    // quadratic ease-in-out, so the change looks even rather than rushed at the start
+    uint8_t p = (elapsed * 255U) / transition;
+    uint8_t amount = p < 128 ? (2U * p * p) >> 8 : 255 - ((2U * (255 - p) * (255 - p)) >> 8);
+    for (int i = 0; i < 16; i++) {
+      Segment::_randomPalette[i] = CRGB(color_blend(uint32_t(Segment::_prevRandomPalette[i]), uint32_t(Segment::_newRandomPalette[i]), amount));
+    }
+    return;
+  }
+  Segment::_lastPaletteSlot = 0; // unsynced: next synced slot starts a fresh transition
+
   unsigned long now = millis();
   uint16_t now_s = now / 1000; // we only need seconds (and @dedehai hated shift >> 10)
   now = (now_s)*1000 + (now % 1000); // ignore days (now is limited to 18 hours as now_s can only store 65535s ~ 18h 12min)
